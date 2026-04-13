@@ -1,0 +1,14 @@
+{
+  "name": "wcag21-tester",
+  "version": "1.0.0",
+  "description": "WCAG 2.1 accessibility testing CLI tool with HTML report",
+  "main": "test.js",
+  "scripts": {
+    "test": "node test.js"
+  },
+  "dependencies": {
+    "@axe-core/puppeteer": "^4.11.0",
+    "puppeteer": "^23.0.0",
+    "pa11y": "^8.0.0"
+  }
+}

@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WCAG 2.1 Tester</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <div class="app">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-left">
+        <h1>WCAG 2.1 Tester</h1>
+        <span class="version">v1.0 | axe-core</span>
+      </div>
+      <div class="header-right">
+        <button id="exportJson" class="btn btn-sm" title="Export JSON" disabled>Export JSON</button>
+        <button id="exportCsv" class="btn btn-sm" title="Export CSV" disabled>Export CSV</button>
+      </div>
+    </header>
+
+    <!-- Scan Controls -->
+    <section class="controls">
+      <div class="scan-row">
+        <button id="scanBtn" class="btn btn-primary">Scan Full Page</button>
+        <div class="partial-scan">
+          <input type="text" id="selectorInput" placeholder="CSS selector for partial scan (optional)" />
+        </div>
+      </div>
+      <div class="filters">
+        <span class="filter-label">Levels:</span>
+        <label><input type="checkbox" id="levelA" checked> A</label>
+        <label><input type="checkbox" id="levelAA" checked> AA</label>
+        <label><input type="checkbox" id="levelAAA" checked> AAA</label>
+        <label class="separator"><input type="checkbox" id="bestPractices" checked> Best Practices</label>
+      </div>
+    </section>
+
+    <!-- Status -->
+    <div id="status" class="status hidden"></div>
+
+    <!-- Summary -->
+    <section id="summary" class="summary hidden">
+      <div class="stat stat-violations">
+        <span class="stat-count" id="violationCount">0</span>
+        <span class="stat-label">Violations</span>
+      </div>
+      <div class="stat stat-incomplete">
+        <span class="stat-count" id="incompleteCount">0</span>
+        <span class="stat-label">Needs Review</span>
+      </div>
+      <div class="stat stat-passes">
+        <span class="stat-count" id="passCount">0</span>
+        <span class="stat-label">Passed</span>
+      </div>
+      <div class="stat stat-inapplicable">
+        <span class="stat-count" id="inapplicableCount">0</span>
+        <span class="stat-label">Not Applicable</span>
+      </div>
+    </section>
+
+    <!-- Tabs -->
+    <nav id="tabs" class="tabs hidden">
+      <button class="tab active" data-tab="violations">Violations</button>
+      <button class="tab" data-tab="incomplete">Needs Review</button>
+      <button class="tab" data-tab="passes">Passed</button>
+      <button class="tab" data-tab="inapplicable">Not Applicable</button>
+    </nav>
+
+    <!-- Results -->
+    <section id="results" class="results"></section>
+
+    <!-- Detail Panel -->
+    <div id="detailPanel" class="detail-panel hidden">
+      <div class="detail-header">
+        <button id="closeDetail" class="btn btn-sm">Back</button>
+        <h3 id="detailTitle"></h3>
+      </div>
+      <div id="detailContent" class="detail-content"></div>
+    </div>
+  </div>
+
+  <script src="panel.js"></script>
+</body>
+</html>
