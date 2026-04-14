@@ -953,6 +953,82 @@ async function runCustomChecks(page) {
         ['wcag256', 'wcag2aaa'], el);
     });
 
+    // ================================================================
+    // GROUP 20: WAVE-PARITY EXTRAS
+    // ================================================================
+
+    // 60. noscript element detected (WAVE: noscript alert)
+    document.querySelectorAll('noscript').forEach(el => {
+      push(incomplete, 'custom-noscript-present', 'minor',
+        'noscript element detected — content inside is only shown when JavaScript is disabled. Verify it is accessible and equivalent to the JS experience',
+        ['best-practice'], el);
+    });
+
+    // 61. iframe without title (accessibility gap)
+    document.querySelectorAll('iframe').forEach(el => {
+      const title = (el.getAttribute('title') || '').trim();
+      const ariaLabel = (el.getAttribute('aria-label') || '').trim();
+      if (!title && !ariaLabel) {
+        push(violations, 'custom-iframe-no-title', 'serious',
+          'iframe has no title or aria-label — screen reader users cannot identify the embedded content (WCAG 2.4.1, 4.1.2)',
+          ['wcag241', 'wcag412', 'wcag2a'], el);
+      }
+    });
+
+    // 62. Deprecated HTML elements (marquee, blink, center, font, etc.)
+    ['marquee', 'blink', 'center', 'font', 'big', 'strike', 'frame', 'frameset'].forEach(tagName => {
+      document.querySelectorAll(tagName).forEach(el => {
+        push(violations, 'custom-deprecated-element', 'moderate',
+          `Deprecated <${tagName}> element — not supported by modern browsers and assistive tech (WCAG 4.1.1)`,
+          ['wcag411', 'wcag2a'], el);
+      });
+    });
+
+    // 63. Plugin/embed detection (Flash, Java, Silverlight — largely obsolete but still appear)
+    document.querySelectorAll('object, embed, applet').forEach(el => {
+      const type = (el.getAttribute('type') || '').toLowerCase();
+      const src = (el.getAttribute('src') || el.getAttribute('data') || '').toLowerCase();
+      if (type.includes('flash') || src.endsWith('.swf') ||
+          type.includes('java') || el.tagName.toLowerCase() === 'applet' ||
+          type.includes('silverlight')) {
+        push(violations, 'custom-deprecated-plugin', 'serious',
+          `Deprecated plugin content detected (${type || el.tagName.toLowerCase()}) — not accessible in modern browsers`,
+          ['wcag411', 'wcag2a'], el);
+      } else {
+        push(incomplete, 'custom-plugin-detected', 'moderate',
+          `Plugin/embed content detected — verify it is accessible`,
+          ['best-practice'], el);
+      }
+    });
+
+    // 64. HTML5 video/audio elements (WAVE: html5_video_audio alert)
+    document.querySelectorAll('video, audio').forEach(el => {
+      const hasControls = el.hasAttribute('controls');
+      if (!hasControls) {
+        push(violations, 'custom-media-no-controls', 'serious',
+          `<${el.tagName.toLowerCase()}> element has no controls attribute — users cannot pause or adjust playback (WCAG 1.4.2, 2.1.1)`,
+          ['wcag142', 'wcag211', 'wcag2a'], el);
+      } else {
+        push(incomplete, 'custom-media-present', 'minor',
+          `<${el.tagName.toLowerCase()}> element detected — verify captions, transcripts, and audio descriptions are provided (WCAG 1.2.1-1.2.5)`,
+          ['wcag122', 'wcag2a'], el);
+      }
+    });
+
+    // 65. Duplicate IDs
+    const ids = {};
+    document.querySelectorAll('[id]').forEach(el => {
+      const id = el.id;
+      if (id) { ids[id] = (ids[id] || 0) + 1; }
+    });
+    Object.entries(ids).forEach(([id, count]) => {
+      if (count > 1) {
+        push(violations, 'custom-duplicate-id', 'serious',
+          `Duplicate ID "${id}" used ${count} times — IDs must be unique for labels and ARIA references to work (WCAG 4.1.1)`,
+          ['wcag411', 'wcag2a'], document.getElementById(id));
+      }
+    });
+
     return { violations, incomplete };
   });
 
