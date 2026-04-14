@@ -146,9 +146,12 @@ h3{font-size:14px;margin:16px 0 8px}
   ${score !== undefined ? `
   <div style="display:flex;align-items:center;gap:20px;margin-bottom:24px;background:#fff;border-radius:12px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.08)">
     <div style="width:80px;height:80px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:800;color:#fff;background:${score >= 90 ? '#16a34a' : score >= 70 ? '#d97706' : '#dc2626'}">${score}</div>
-    <div>
-      <div style="font-size:18px;font-weight:700">Accessibility Score: ${score}/100</div>
+    <div style="flex:1">
+      <div style="font-size:18px;font-weight:700">Compliance Score (WCAG 2.1 AA): ${score}/100</div>
       <div style="font-size:14px;color:#6b7280;margin-top:2px">Grade: ${score >= 90 ? 'A' : score >= 80 ? 'B' : score >= 70 ? 'C' : score >= 50 ? 'D' : 'F'} — ${score >= 90 ? 'Excellent' : score >= 80 ? 'Good' : score >= 70 ? 'Needs Improvement' : score >= 50 ? 'Poor' : 'Critical Issues'}</div>
+      <div style="font-size:12px;color:#9ca3af;margin-top:6px;line-height:1.5">
+        Measures compliance with <strong>WCAG 2.1 Level A + AA</strong> success criteria — the conformance level required by <strong>Section 508 (US)</strong>, <strong>ADA</strong>, and <strong>EN 301 549 (EU)</strong>. AAA violations and best-practice issues are reported separately and do not affect this score.
+      </div>
     </div>
   </div>` : ''}
 
