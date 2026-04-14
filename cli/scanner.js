@@ -1082,6 +1082,229 @@ async function runCustomChecks(page) {
       }
     });
 
+    // ================================================================
+    // GROUP 21: SCREEN READER / ARIA / SEMANTIC CHECKS
+    // ================================================================
+
+    // 66. aria-labelledby / aria-describedby pointing to non-existent IDs
+    ['aria-labelledby', 'aria-describedby', 'aria-controls', 'aria-owns'].forEach(attr => {
+      document.querySelectorAll(`[${attr}]`).forEach(el => {
+        const ids = (el.getAttribute(attr) || '').split(/\s+/).filter(Boolean);
+        const missing = ids.filter(id => !document.getElementById(id));
+        if (missing.length > 0) {
+          push(violations, 'custom-aria-broken-reference', 'serious',
+            `${attr} references non-existent ID(s): ${missing.join(', ')} — screen readers cannot find the referenced element (WCAG 1.3.1, 4.1.2)`,
+            ['wcag131', 'wcag412', 'wcag2a'], el);
+        }
+      });
+    });
+
+    // 67. Redundant ARIA — where native HTML already provides the role
+    const redundantRoles = {
+      'BUTTON': 'button', 'A': 'link', 'NAV': 'navigation', 'MAIN': 'main',
+      'HEADER': 'banner', 'FOOTER': 'contentinfo', 'ASIDE': 'complementary',
+      'H1': 'heading', 'H2': 'heading', 'H3': 'heading', 'H4': 'heading', 'H5': 'heading', 'H6': 'heading',
+      'UL': 'list', 'OL': 'list', 'LI': 'listitem', 'FORM': 'form',
+      'TABLE': 'table', 'IMG': 'img'
+    };
+    document.querySelectorAll('[role]').forEach(el => {
+      const role = el.getAttribute('role');
+      const nativeRole = redundantRoles[el.tagName];
+      if (nativeRole && role === nativeRole) {
+        push(incomplete, 'custom-aria-redundant-role', 'minor',
+          `role="${role}" is redundant on <${el.tagName.toLowerCase()}> — native HTML element already has this role`,
+          ['best-practice'], el);
+      }
+    });
+
+    // 68. Interactive elements using div/span without proper ARIA
+    document.querySelectorAll('div[onclick], span[onclick], div[onkeydown], span[onkeydown]').forEach(el => {
+      const role = el.getAttribute('role');
+      const validInteractiveRoles = ['button', 'link', 'menuitem', 'tab', 'checkbox', 'radio', 'switch'];
+      if (!role || !validInteractiveRoles.includes(role)) {
+        push(violations, 'custom-div-interactive-no-role', 'serious',
+          `Interactive <${el.tagName.toLowerCase()}> has no button/link role — screen reader users cannot identify what it does. Use a <button>/<a> or add role="button" + tabindex="0" (WCAG 4.1.2)`,
+          ['wcag412', 'wcag2a'], el);
+      }
+    });
+
+    // 69. Elements with ARIA role but missing required states/properties
+    document.querySelectorAll('[role="checkbox"], [role="radio"], [role="switch"]').forEach(el => {
+      if (!el.hasAttribute('aria-checked')) {
+        push(violations, 'custom-aria-missing-state', 'serious',
+          `role="${el.getAttribute('role')}" requires aria-checked attribute (WCAG 4.1.2)`,
+          ['wcag412', 'wcag2a'], el);
+      }
+    });
+    document.querySelectorAll('[role="combobox"]').forEach(el => {
+      if (!el.hasAttribute('aria-expanded')) {
+        push(violations, 'custom-combobox-missing-expanded', 'serious',
+          'role="combobox" requires aria-expanded attribute (WCAG 4.1.2)',
+          ['wcag412', 'wcag2a'], el);
+      }
+    });
+    document.querySelectorAll('[role="slider"]').forEach(el => {
+      const required = ['aria-valuenow', 'aria-valuemin', 'aria-valuemax'];
+      const missing = required.filter(a => !el.hasAttribute(a));
+      if (missing.length > 0) {
+        push(violations, 'custom-slider-missing-state', 'serious',
+          `role="slider" requires: ${missing.join(', ')} (WCAG 4.1.2)`,
+          ['wcag412', 'wcag2a'], el);
+      }
+    });
+
+    // 70. Modal/dialog without proper ARIA
+    document.querySelectorAll('[role="dialog"], [role="alertdialog"]').forEach(el => {
+      const hasLabel = el.hasAttribute('aria-label') || el.hasAttribute('aria-labelledby');
+      if (!hasLabel) {
+        push(violations, 'custom-dialog-no-label', 'serious',
+          'Dialog/alertdialog has no aria-label or aria-labelledby — screen reader users will not know what the dialog is about (WCAG 4.1.2)',
+          ['wcag412', 'wcag2a'], el);
+      }
+      if (!el.hasAttribute('aria-modal') && el.getAttribute('role') === 'dialog') {
+        push(incomplete, 'custom-dialog-missing-modal', 'moderate',
+          'Dialog should have aria-modal="true" if it blocks interaction with the rest of the page',
+          ['best-practice'], el);
+      }
+    });
+
+    // 71. aria-hidden="true" on focusable element (traps SR users)
+    document.querySelectorAll('[aria-hidden="true"]').forEach(el => {
+      const focusable = el.querySelectorAll('a, button, input, select, textarea, [tabindex]');
+      const selfIsFocusable = ['a','button','input','select','textarea'].includes(el.tagName.toLowerCase()) ||
+                              (el.hasAttribute('tabindex') && el.getAttribute('tabindex') !== '-1');
+      if (focusable.length > 0 || selfIsFocusable) {
+        push(violations, 'custom-aria-hidden-focusable', 'serious',
+          'aria-hidden="true" contains focusable elements — keyboard users can reach elements that are hidden from screen readers (WCAG 1.3.1, 4.1.2)',
+          ['wcag131', 'wcag412', 'wcag2a'], el);
+      }
+    });
+
+    // 72. Multiple landmarks of same type without distinguishing labels
+    ['nav', 'main', 'aside'].forEach(tag => {
+      const elements = [...document.querySelectorAll(tag), ...document.querySelectorAll(`[role="${tag === 'nav' ? 'navigation' : tag === 'aside' ? 'complementary' : tag}"]`)];
+      if (elements.length > 1) {
+        const unlabeled = elements.filter(el => !el.hasAttribute('aria-label') && !el.hasAttribute('aria-labelledby'));
+        unlabeled.forEach(el => {
+          push(violations, 'custom-landmark-unlabeled', 'moderate',
+            `Multiple <${tag}> landmarks on page — each needs aria-label or aria-labelledby so screen reader users can distinguish them (WCAG 1.3.1, 2.4.6)`,
+            ['wcag131', 'wcag246', 'wcag2a', 'wcag2aa'], el);
+        });
+      }
+    });
+
+    // 73. Tables without proper row/column headers
+    document.querySelectorAll('table').forEach(table => {
+      const role = table.getAttribute('role');
+      if (role === 'presentation' || role === 'none') return;
+      const rows = table.querySelectorAll('tr');
+      if (rows.length < 2) return;
+      const firstRow = rows[0];
+      const firstRowHasTh = firstRow.querySelectorAll('th').length > 0;
+      const firstColHasTh = Array.from(rows).every(r => {
+        const firstCell = r.firstElementChild;
+        return firstCell && firstCell.tagName === 'TH';
+      });
+      if (!firstRowHasTh && !firstColHasTh) {
+        push(violations, 'custom-table-no-headers', 'serious',
+          'Data table has no header cells (<th>) — screen reader users cannot understand the data relationships (WCAG 1.3.1)',
+          ['wcag131', 'wcag2a'], table);
+      }
+      // th without scope attribute in complex tables
+      const complexTable = table.querySelectorAll('th').length > 3;
+      if (complexTable) {
+        const thWithoutScope = Array.from(table.querySelectorAll('th')).filter(th => !th.hasAttribute('scope'));
+        if (thWithoutScope.length > 0) {
+          push(incomplete, 'custom-th-missing-scope', 'moderate',
+            `Complex table has <th> elements without scope attribute — use scope="col" or scope="row" to clarify header relationships`,
+            ['wcag131', 'wcag2a'], thWithoutScope[0]);
+        }
+      }
+    });
+
+    // 74. Lists containing non-list items (breaks SR list navigation)
+    document.querySelectorAll('ul, ol').forEach(list => {
+      const role = list.getAttribute('role');
+      if (role === 'presentation' || role === 'none') return;
+      const directChildren = Array.from(list.children);
+      const nonLi = directChildren.filter(c => c.tagName !== 'LI' && c.tagName !== 'SCRIPT' && c.tagName !== 'TEMPLATE');
+      if (nonLi.length > 0) {
+        push(violations, 'custom-list-invalid-children', 'moderate',
+          `<${list.tagName.toLowerCase()}> contains non-<li> children (${nonLi.map(n => n.tagName.toLowerCase()).join(', ')}) — breaks screen reader list navigation (WCAG 1.3.1)`,
+          ['wcag131', 'wcag2a'], list);
+      }
+    });
+
+    // 75. Expandable controls without aria-expanded
+    document.querySelectorAll('[class*="dropdown"], [class*="accordion"], [class*="collapse"], [aria-haspopup], [data-toggle]').forEach(el => {
+      if (el.tagName === 'BUTTON' || el.getAttribute('role') === 'button') {
+        if (!el.hasAttribute('aria-expanded')) {
+          push(incomplete, 'custom-missing-aria-expanded', 'moderate',
+            'Expandable control (dropdown/accordion/collapse) should have aria-expanded attribute to communicate state to screen readers (WCAG 4.1.2)',
+            ['wcag412', 'wcag2a'], el);
+        }
+      }
+    });
+
+    // 76. Current page/location not indicated with aria-current
+    const navLinks = document.querySelectorAll('nav a, [role="navigation"] a');
+    const currentLocation = window.location.pathname;
+    let hasAriaCurrent = false;
+    navLinks.forEach(a => {
+      if (a.hasAttribute('aria-current')) hasAriaCurrent = true;
+    });
+    // If nav exists but no aria-current anywhere, flag it for review
+    if (navLinks.length > 2 && !hasAriaCurrent) {
+      push(incomplete, 'custom-missing-aria-current', 'minor',
+        'Navigation has no aria-current attribute — current page not announced to screen readers. Add aria-current="page" to the active link (WCAG 1.3.1)',
+        ['wcag131', 'wcag2a'], navLinks[0]);
+    }
+
+    // 77. Form with multiple submit buttons - can confuse SR users
+    document.querySelectorAll('form').forEach(form => {
+      const submits = form.querySelectorAll('button[type="submit"], input[type="submit"], button:not([type])');
+      if (submits.length > 1) {
+        const hasDistinctLabels = new Set(Array.from(submits).map(s => (s.textContent || s.value || '').trim())).size === submits.length;
+        if (!hasDistinctLabels) {
+          push(violations, 'custom-form-duplicate-submit', 'moderate',
+            `Form has ${submits.length} submit buttons with identical or empty labels — screen reader users cannot distinguish them (WCAG 2.4.6)`,
+            ['wcag246', 'wcag2aa'], form);
+        }
+      }
+    });
+
+    // 78. role="button" without keyboard handler
+    document.querySelectorAll('[role="button"]:not(button)').forEach(el => {
+      const hasKeyHandler = el.hasAttribute('onkeydown') || el.hasAttribute('onkeypress') || el.hasAttribute('onkeyup');
+      const hasTabindex = el.hasAttribute('tabindex');
+      if (!hasTabindex) {
+        push(violations, 'custom-role-button-no-tabindex', 'serious',
+          'Element with role="button" needs tabindex="0" to be keyboard-focusable (WCAG 2.1.1)',
+          ['wcag211', 'wcag2a'], el);
+      } else if (!hasKeyHandler) {
+        push(incomplete, 'custom-role-button-no-key-handler', 'moderate',
+          'Element with role="button" should have keyboard event handlers (onkeydown for Enter/Space) — screen reader + keyboard users expect buttons to respond to both click AND Enter/Space (WCAG 2.1.1)',
+          ['wcag211', 'wcag2a'], el);
+      }
+    });
+
+    // 79. Live regions — check aria-live usage
+    document.querySelectorAll('[aria-live]').forEach(el => {
+      const value = el.getAttribute('aria-live');
+      if (!['off', 'polite', 'assertive'].includes(value)) {
+        push(violations, 'custom-aria-live-invalid', 'moderate',
+          `aria-live="${value}" is invalid — must be off, polite, or assertive (WCAG 4.1.3)`,
+          ['wcag413', 'wcag2aa'], el);
+      }
+    });
+    // Flag role="alert" / role="status" as info
+    const alerts = document.querySelectorAll('[role="alert"], [role="status"], [aria-live="assertive"], [aria-live="polite"]');
+    if (alerts.length > 0) {
+      push(incomplete, 'custom-live-region-present', 'minor',
+        `${alerts.length} live region(s) detected — verify they announce at appropriate times and don't spam screen reader users (WCAG 4.1.3)`,
+        ['wcag413', 'wcag2aa'], alerts[0]);
+    }
+
     return { violations, incomplete };
   });
 
