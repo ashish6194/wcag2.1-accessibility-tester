@@ -314,7 +314,8 @@ async function runCustomChecks(page) {
       }
     });
 
-    // 14. Redundant adjacent links — same href
+    // 14. Redundant/adjacent links — same href, visually close
+    // WAVE-style: catches logo+text pointing to same URL, nav items repeated, etc.
     const linksByHref = {};
     links.forEach(a => {
       const href = a.href;
@@ -324,12 +325,28 @@ async function runCustomChecks(page) {
     });
     Object.entries(linksByHref).forEach(([href, els]) => {
       if (els.length > 1) {
-        // Check if they're adjacent (siblings or parent-child)
         for (let i = 0; i < els.length - 1; i++) {
-          if (els[i].parentElement === els[i + 1].parentElement || els[i].contains(els[i + 1]) || els[i + 1].contains(els[i])) {
+          const a = els[i];
+          const b = els[i + 1];
+          // Check visual adjacency via bounding rects
+          const rectA = a.getBoundingClientRect();
+          const rectB = b.getBoundingClientRect();
+          const vertDist = Math.abs(rectA.top - rectB.top);
+          const horizDist = Math.abs(rectA.left - rectB.left);
+          // Consider adjacent if within 50px horizontal and 100px vertical (same row/near-row)
+          const isVisuallyAdjacent = vertDist < 100 && horizDist < 500;
+          // Or structurally close (same parent, or within 2 levels)
+          const isStructurallyClose = a.parentElement === b.parentElement ||
+            a.parentElement === b.parentElement?.parentElement ||
+            a.parentElement?.parentElement === b.parentElement ||
+            a.contains(b) || b.contains(a);
+
+          if (isVisuallyAdjacent || isStructurallyClose) {
+            const textA = (a.textContent || '').trim();
+            const textB = (b.textContent || '').trim();
             push(incomplete, 'custom-link-redundant', 'minor',
-              `Multiple adjacent links point to same URL — consider combining (WCAG 2.4.4)`,
-              ['wcag244', 'wcag2a'], els[i]);
+              `Multiple links point to same URL (${href.slice(0, 60)}${href.length > 60 ? '...' : ''}) — consider combining "${textA.slice(0, 30)}" and "${textB.slice(0, 30)}" into one link (WCAG 2.4.4)`,
+              ['wcag244', 'wcag2a'], a);
             break;
           }
         }
