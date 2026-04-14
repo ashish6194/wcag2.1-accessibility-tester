@@ -1,12 +1,12 @@
 const fs = require('fs');
 const CRITERIA = require('./wcag-criteria');
 
-function generateReport({ url, timestamp, axeResults, pa11yResults, merged, filepath, pages, score }) {
-  const html = buildHtml(url, timestamp, axeResults, pa11yResults, merged, pages, score);
+function generateReport({ url, pageTitle, timestamp, axeResults, pa11yResults, merged, filepath, pages, score }) {
+  const html = buildHtml(url, pageTitle, timestamp, axeResults, pa11yResults, merged, pages, score);
   fs.writeFileSync(filepath, html, 'utf-8');
 }
 
-function buildHtml(url, timestamp, axeResults, pa11yResults, merged, pages, score) {
+function buildHtml(url, pageTitle, timestamp, axeResults, pa11yResults, merged, pages, score) {
   const date = new Date(timestamp).toLocaleString();
   const totalViolationNodes = merged.violations.reduce((s, r) => s + (r.nodes ? r.nodes.length : 0), 0);
   const totalIncompleteNodes = merged.incomplete.reduce((s, r) => s + (r.nodes ? r.nodes.length : 0), 0);
@@ -40,7 +40,7 @@ function buildHtml(url, timestamp, axeResults, pa11yResults, merged, pages, scor
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WCAG 2.1 Report — ${esc(url)}</title>
+<title>${pageTitle ? esc(pageTitle) + ' — ' : ''}WCAG 2.1 Accessibility Report</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1a1a1a;background:#f8f9fa;line-height:1.6;font-size:14px}
@@ -135,15 +135,21 @@ h3{font-size:14px;margin:16px 0 8px}
 </head>
 <body>
 <div class="container">
-  <h1>WCAG 2.1 Accessibility Report</h1>
+  <h1>${pageTitle ? esc(pageTitle) : 'WCAG 2.1 Accessibility Report'}</h1>
+  <div style="font-size:14px;color:#6b7280;margin-bottom:4px">WCAG 2.1 Accessibility Report</div>
   <div class="meta">
     <span>URL: <strong>${esc(url)}</strong></span>
     <span>Date: ${esc(date)}</span>
-    <span>Engines: axe-core + pa11y</span>
+    <span>Engines: axe-core + pa11y + Lighthouse + custom</span>
   </div>
+
+  ${renderComplianceVerdict(merged, score, byImpact)}
+
+  ${renderPrioritizedActions(merged)}
 
   <!-- Score -->
   ${score !== undefined ? `
+  <h2 style="margin-top:32px">Score Breakdown</h2>
   <div style="display:flex;align-items:center;gap:20px;margin-bottom:24px;background:#fff;border-radius:12px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.08)">
     <div style="width:80px;height:80px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:800;color:#fff;background:${score >= 90 ? '#16a34a' : score >= 70 ? '#d97706' : '#dc2626'}">${score}</div>
     <div style="flex:1">
@@ -203,9 +209,9 @@ h3{font-size:14px;margin:16px 0 8px}
     <div class="impact-chip impact-minor">${byImpact.minor} Minor</div>
   </div>
 
-  <!-- Violations -->
-  <h2>Violations (${merged.violations.length} rules, ${totalViolationNodes} elements)</h2>
-  ${renderRules(merged.violations, 'violation')}
+  <!-- Violations grouped by WCAG criterion -->
+  <h2>Violations by WCAG Criterion (${merged.violations.length} rules, ${totalViolationNodes} elements)</h2>
+  ${renderRulesByWcagCriterion(merged.violations)}
 
   <!-- Needs Review -->
   <h2>Needs Review (${merged.incomplete.length} rules)</h2>
@@ -496,6 +502,205 @@ function formatTag(tag) {
 function esc(str) {
   if (!str) return '';
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// ============================================================
+// 1. COMPLIANCE VERDICT
+// ============================================================
+function renderComplianceVerdict(merged, score, byImpact) {
+  // Count A/AA violations only (compliance-critical)
+  const criticalCount = byImpact.critical || 0;
+  const seriousCount = byImpact.serious || 0;
+  const moderateCount = byImpact.moderate || 0;
+
+  // Filter to A/AA only
+  const aaViolations = merged.violations.filter(rule => {
+    const tags = rule.tags || [];
+    const hasA_or_AA = tags.some(t => /^wcag(2|21)(a|aa)$/.test(t) || /^wcag\d{3,}$/.test(t));
+    const isAAAOnly = tags.some(t => /^wcag(2|21)aaa$/.test(t)) && !hasA_or_AA;
+    return hasA_or_AA && !isAAAOnly;
+  });
+
+  const aaCriticalRules = aaViolations.filter(r => r.impact === 'critical').length;
+  const aaSeriousRules = aaViolations.filter(r => r.impact === 'serious').length;
+  const aaModerateRules = aaViolations.filter(r => r.impact === 'moderate').length;
+  const aaTotalElements = aaViolations.reduce((s, r) => s + (r.nodes ? r.nodes.length : 0), 0);
+
+  // Determine verdict
+  let verdict, verdictColor, verdictIcon;
+  if (aaCriticalRules === 0 && aaSeriousRules === 0 && aaModerateRules === 0) {
+    verdict = 'COMPLIANT'; verdictColor = '#16a34a'; verdictIcon = '✓';
+  } else if (aaCriticalRules === 0 && aaSeriousRules === 0) {
+    verdict = 'SUBSTANTIALLY COMPLIANT'; verdictColor = '#d97706'; verdictIcon = '⚠';
+  } else {
+    verdict = 'NOT COMPLIANT'; verdictColor = '#dc2626'; verdictIcon = '✗';
+  }
+
+  // Estimate effort
+  const effortMinutes = (aaCriticalRules * 15) + (aaSeriousRules * 20) + (aaModerateRules * 10);
+  let effort;
+  if (effortMinutes === 0) effort = 'No fixes required';
+  else if (effortMinutes < 60) effort = `~${effortMinutes} minutes`;
+  else if (effortMinutes < 480) effort = `~${Math.round(effortMinutes / 60)} hours`;
+  else effort = `${Math.round(effortMinutes / 480)}+ working days`;
+
+  return `
+  <div style="background:#fff;border-radius:12px;padding:24px;margin-bottom:24px;box-shadow:0 1px 3px rgba(0,0,0,0.08);border-left:6px solid ${verdictColor}">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+      <span style="display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:50%;background:${verdictColor};color:#fff;font-size:22px;font-weight:700">${verdictIcon}</span>
+      <div>
+        <div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px">Compliance Verdict</div>
+        <div style="font-size:22px;font-weight:800;color:${verdictColor}">${verdict}</div>
+        <div style="font-size:13px;color:#6b7280;margin-top:2px">with WCAG 2.1 Level A + AA (Section 508, ADA, EN 301 549)</div>
+      </div>
+    </div>
+
+    ${aaViolations.length > 0 ? `
+    <div style="background:#f9fafb;border-radius:8px;padding:14px 16px;margin-top:16px">
+      <div style="font-size:12px;font-weight:600;color:#374151;text-transform:uppercase;letter-spacing:0.3px;margin-bottom:8px">Blockers to Compliance</div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap">
+        ${aaCriticalRules > 0 ? `<div><span style="display:inline-block;padding:2px 10px;border-radius:4px;background:#fef2f2;color:#dc2626;font-weight:700;font-size:12px">CRITICAL</span> <strong>${aaCriticalRules}</strong> issue${aaCriticalRules !== 1 ? 's' : ''} (blocks access entirely)</div>` : ''}
+        ${aaSeriousRules > 0 ? `<div><span style="display:inline-block;padding:2px 10px;border-radius:4px;background:#fff7ed;color:#ea580c;font-weight:700;font-size:12px">SERIOUS</span> <strong>${aaSeriousRules}</strong> issue${aaSeriousRules !== 1 ? 's' : ''} (significant barrier)</div>` : ''}
+        ${aaModerateRules > 0 ? `<div><span style="display:inline-block;padding:2px 10px;border-radius:4px;background:#fffbeb;color:#d97706;font-weight:700;font-size:12px">MODERATE</span> <strong>${aaModerateRules}</strong> issue${aaModerateRules !== 1 ? 's' : ''}</div>` : ''}
+      </div>
+      <div style="margin-top:10px;font-size:13px;color:#4b5563">
+        <strong>${aaTotalElements}</strong> total elements affected across <strong>${aaViolations.length}</strong> distinct rules.
+        &nbsp;&nbsp;Estimated effort to reach compliance: <strong>${effort}</strong>.
+      </div>
+    </div>` : `
+    <div style="background:#f0fdf4;border-radius:8px;padding:14px 16px;margin-top:16px;color:#166534;font-size:13px">
+      <strong>No WCAG 2.1 A/AA violations detected.</strong> This page passes automated compliance checks. Manual verification of non-automatable criteria still recommended.
+    </div>`}
+  </div>`;
+}
+
+// ============================================================
+// 2. PRIORITIZED ACTION LIST (Fix These First)
+// ============================================================
+function renderPrioritizedActions(merged) {
+  // Filter to compliance-critical (A/AA) violations
+  const aaViolations = merged.violations.filter(rule => {
+    const tags = rule.tags || [];
+    const hasA_or_AA = tags.some(t => /^wcag(2|21)(a|aa)$/.test(t) || /^wcag\d{3,}$/.test(t));
+    const isAAAOnly = tags.some(t => /^wcag(2|21)aaa$/.test(t)) && !hasA_or_AA;
+    return hasA_or_AA && !isAAAOnly;
+  });
+
+  if (aaViolations.length === 0) return '';
+
+  // Score each rule: impact weight × log(node count) — ease factored in
+  const impactWeights = { critical: 100, serious: 50, moderate: 20, minor: 5 };
+  const priorityEffort = {
+    // Quick wins
+    'image-alt': 5, 'label': 10, 'button-name': 5, 'link-name': 5,
+    'document-title': 2, 'html-has-lang': 1, 'duplicate-id': 5,
+    // Medium
+    'color-contrast': 30, 'color-contrast-enhanced': 30,
+    'heading-order': 15, 'landmark-one-main': 10,
+    // Larger
+    'region': 20, 'bypass': 15
+  };
+
+  const scored = aaViolations.map(rule => {
+    const weight = impactWeights[rule.impact] || 10;
+    const nodes = rule.nodes ? rule.nodes.length : 1;
+    // Priority = impact × slight node count scaling
+    const priority = weight * (1 + Math.log10(nodes));
+    const baseId = (rule.id || '').replace(/^(pa11y-|lh-|custom-)/, '');
+    const effortPerNode = priorityEffort[baseId] || 10;
+    const totalEffort = effortPerNode + (nodes - 1) * Math.min(effortPerNode * 0.3, 5);
+    const effortLabel = totalEffort < 15 ? 'Quick (<15 min)' : totalEffort < 60 ? `${Math.round(totalEffort)} min` : `${Math.round(totalEffort / 60 * 2) / 2} hours`;
+    return { rule, priority, effortLabel, nodes };
+  }).sort((a, b) => b.priority - a.priority);
+
+  const top5 = scored.slice(0, 5);
+
+  return `
+  <div style="background:#fff;border-radius:12px;padding:20px;margin-bottom:24px;box-shadow:0 1px 3px rgba(0,0,0,0.08)">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+      <span style="font-size:20px">🎯</span>
+      <div>
+        <div style="font-size:16px;font-weight:700;color:#1a1a1a">Fix These First</div>
+        <div style="font-size:12px;color:#6b7280">Top ${top5.length} issues prioritized by impact × effort</div>
+      </div>
+    </div>
+    ${top5.map((item, i) => {
+      const rule = item.rule;
+      const impact = rule.impact || 'info';
+      const impactEmoji = impact === 'critical' ? '🔴' : impact === 'serious' ? '🟠' : impact === 'moderate' ? '🟡' : '🟢';
+      const desc = rule.description || rule.help || rule.id;
+      return `
+      <div style="display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px solid #f3f4f6">
+        <div style="font-size:18px;font-weight:800;color:#9ca3af;min-width:28px">${i + 1}.</div>
+        <div style="flex:1">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span style="font-size:14px">${impactEmoji}</span>
+            <span style="font-weight:600;font-size:14px;color:#1a1a1a">${esc(desc)}</span>
+          </div>
+          <div style="font-size:12px;color:#6b7280;margin-top:4px">
+            <strong>${item.nodes}</strong> element${item.nodes !== 1 ? 's' : ''} · Estimated effort: <strong>${esc(item.effortLabel)}</strong>
+            ${rule.helpUrl ? ` · <a href="${esc(rule.helpUrl)}" target="_blank" style="color:#3b82f6">Fix guide &rarr;</a>` : ''}
+          </div>
+        </div>
+      </div>`;
+    }).join('')}
+    ${aaViolations.length > 5 ? `<div style="margin-top:12px;font-size:12px;color:#9ca3af">+${aaViolations.length - 5} more compliance issues below</div>` : ''}
+  </div>`;
+}
+
+// ============================================================
+// 3. GROUP VIOLATIONS BY WCAG CRITERION
+// ============================================================
+function renderRulesByWcagCriterion(rules) {
+  if (!rules || rules.length === 0) {
+    return '<p style="color:#9ca3af;padding:12px 0">None found.</p>';
+  }
+
+  // Group by WCAG criterion (e.g., 1.1.1)
+  const byCriterion = {};
+  rules.forEach(rule => {
+    const tags = rule.tags || [];
+    let criterionId = null;
+    for (const tag of tags) {
+      const m = tag.match(/^wcag(\d)(\d)(\d+)$/);
+      if (m) { criterionId = m[1] + '.' + m[2] + '.' + m[3]; break; }
+    }
+    if (!criterionId) criterionId = 'other'; // Rules without specific criterion mapping
+
+    if (!byCriterion[criterionId]) byCriterion[criterionId] = [];
+    byCriterion[criterionId].push(rule);
+  });
+
+  // Sort criterion IDs
+  const sortedIds = Object.keys(byCriterion).sort((a, b) => {
+    if (a === 'other') return 1;
+    if (b === 'other') return -1;
+    const pa = a.split('.').map(Number);
+    const pb = b.split('.').map(Number);
+    for (let i = 0; i < 3; i++) { if (pa[i] !== pb[i]) return pa[i] - pb[i]; }
+    return 0;
+  });
+
+  return sortedIds.map(cid => {
+    const criterion = cid !== 'other' ? CRITERIA.find(c => c.id === cid) : null;
+    const cRules = byCriterion[cid];
+    const totalNodes = cRules.reduce((s, r) => s + (r.nodes ? r.nodes.length : 0), 0);
+    const wcagUrl = criterion ? `https://www.w3.org/WAI/WCAG21/Understanding/${wcagIdToSlug(cid)}` : '';
+
+    return `
+    <div style="margin-bottom:20px">
+      <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;background:#eef2ff;border-radius:8px 8px 0 0;border-left:4px solid #4338ca">
+        <span style="font-size:18px;font-weight:800;color:#4338ca">${cid !== 'other' ? esc(cid) : 'Uncategorized'}</span>
+        ${criterion ? `
+          <span style="flex:1;font-size:14px;font-weight:600;color:#1a1a1a">${esc(criterion.name)}</span>
+          <span style="padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;background:${criterion.level === 'A' ? '#dbeafe' : criterion.level === 'AA' ? '#fef3c7' : '#fce7f3'};color:${criterion.level === 'A' ? '#1d4ed8' : criterion.level === 'AA' ? '#92400e' : '#9d174d'}">Level ${esc(criterion.level)}</span>
+        ` : '<span style="flex:1;font-size:14px;color:#6b7280">Rules without direct WCAG mapping</span>'}
+        <span style="font-size:12px;color:#6b7280">${cRules.length} rule${cRules.length !== 1 ? 's' : ''} · ${totalNodes} element${totalNodes !== 1 ? 's' : ''}</span>
+        ${wcagUrl ? `<a href="${esc(wcagUrl)}" target="_blank" style="font-size:12px;color:#3b82f6;text-decoration:none;font-weight:500">W3C docs &rarr;</a>` : ''}
+      </div>
+      ${renderRules(cRules, 'violation')}
+    </div>`;
+  }).join('');
 }
 
 module.exports = { generateReport };

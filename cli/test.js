@@ -132,8 +132,13 @@ async function run() {
       fs.writeFileSync(outPath, xml);
       console.log(`\nJUnit XML report: ${outPath}`);
     } else {
-      // HTML report (default)
-      const outPath = flags.output || `wcag-report-${timestamp}.html`;
+      // HTML report (default) — use page title in filename when available
+      let defaultFilename = `wcag-report-${timestamp}.html`;
+      if (!isBatch && allResults[0] && allResults[0].pageTitle) {
+        const slug = sanitizeFilename(allResults[0].pageTitle);
+        if (slug) defaultFilename = `wcag-report-${slug}-${timestamp}.html`;
+      }
+      const outPath = flags.output || defaultFilename;
       const filepath = path.resolve(outPath);
 
       if (isBatch) {
@@ -151,6 +156,7 @@ async function run() {
         const r = allResults[0];
         generateReport({
           url: r.url,
+          pageTitle: r.pageTitle,
           timestamp: new Date().toISOString(),
           axeResults: r.axeResults,
           pa11yResults: r.pa11yResults,
@@ -325,6 +331,17 @@ function formatJunitXml(results) {
 
   xml += `</testsuites>\n`;
   return xml;
+}
+
+function sanitizeFilename(title) {
+  if (!title) return '';
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')   // remove special chars
+    .replace(/\s+/g, '-')            // spaces to dashes
+    .replace(/-+/g, '-')             // collapse dashes
+    .replace(/^-|-$/g, '')           // trim dashes
+    .slice(0, 50);                   // keep it reasonable
 }
 
 function escXml(str) {

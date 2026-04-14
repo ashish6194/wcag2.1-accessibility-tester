@@ -18,6 +18,9 @@ async function scanPage(browser, url, options = {}) {
     log(`${label}Loading page...`);
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
 
+    // Capture page title for reports
+    const pageTitle = await page.title();
+
     // 1. axe-core
     log(`${label}Running axe-core...`);
     const axeResults = await new AxePuppeteer(page)
@@ -64,7 +67,7 @@ async function scanPage(browser, url, options = {}) {
     const score = calculateScore(merged);
 
     return {
-      url, axeResults,
+      url, pageTitle, axeResults,
       pa11yResults: pa11yResults.issues || [],
       lighthouseResults,
       customResults,
