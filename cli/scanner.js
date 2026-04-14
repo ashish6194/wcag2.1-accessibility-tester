@@ -194,13 +194,18 @@ async function runCustomChecks(page) {
           ['wcag111', 'wcag2a'], img);
       }
 
-      // 4. Redundant alt — matches adjacent text
+      // 4. Redundant alt — matches adjacent text (strict: only when EXACT match and short)
       const parent = img.parentElement;
-      if (parent && alt) {
-        const siblingText = (parent.textContent || '').replace(alt, '').trim();
-        if (siblingText && alt.length > 5 && parent.textContent.includes(alt) && parent.querySelectorAll('img').length === 1) {
-          push(incomplete, 'custom-alt-redundant', 'moderate',
-            `Alt text may duplicate adjacent visible text: "${alt.slice(0, 50)}" (WCAG 1.1.1)`,
+      if (parent && alt && alt.length >= 5 && alt.length <= 30) {
+        // Get sibling text excluding this image
+        const siblingText = Array.from(parent.childNodes)
+          .filter(n => n !== img && n.nodeType === Node.TEXT_NODE)
+          .map(n => (n.textContent || '').trim())
+          .join(' ').trim();
+        // Only flag if alt exactly matches a sibling text node (not embedded in larger text)
+        if (siblingText && siblingText.toLowerCase() === alt.toLowerCase()) {
+          push(incomplete, 'custom-alt-redundant', 'minor',
+            `Alt text duplicates adjacent text: "${alt}" — decorative images should use alt="" (WCAG 1.1.1)`,
             ['wcag111', 'wcag2a'], img);
         }
       }
@@ -246,14 +251,21 @@ async function runCustomChecks(page) {
     // ================================================================
 
     // 9. Possible headings — bold/large text not in heading tags
+    // Stricter: requires larger font (20px+), bold (700+), isolated element, no link/button context
     document.querySelectorAll('p, div, span').forEach(el => {
-      if (el.closest('h1,h2,h3,h4,h5,h6,header,nav,footer')) return;
+      if (el.closest('h1,h2,h3,h4,h5,h6,header,nav,footer,a,button,label')) return;
+      // Skip if parent is already a heading-like element
+      const parent = el.parentElement;
+      if (parent && /^(H[1-6]|HEADER|NAV|BUTTON|A|LABEL)$/.test(parent.tagName)) return;
       const style = window.getComputedStyle(el);
       const fontSize = parseFloat(style.fontSize);
       const fontWeight = parseInt(style.fontWeight);
       const text = (el.textContent || '').trim();
-      if (text.length > 2 && text.length < 80 && fontSize >= 18 && fontWeight >= 700 && el.children.length === 0) {
-        push(incomplete, 'custom-heading-possible', 'moderate',
+      // Check if this element stands alone visually (no siblings or isolated block)
+      const hasSiblingText = parent && Array.from(parent.children).some(c => c !== el && (c.textContent || '').trim().length > 5);
+      if (text.length > 3 && text.length < 60 && fontSize >= 20 && fontWeight >= 700 &&
+          el.children.length === 0 && !hasSiblingText) {
+        push(incomplete, 'custom-heading-possible', 'minor',
           `Text looks like a heading but is not in a heading element: "${text.slice(0, 40)}" (WCAG 1.3.1)`,
           ['wcag131', 'wcag2a'], el);
       }
@@ -484,15 +496,23 @@ async function runCustomChecks(page) {
     // GROUP 6: READABILITY & VISUAL
     // ================================================================
 
-    // 25. Very small text
-    document.querySelectorAll('p, span, li, td, th, a, label, div').forEach(el => {
-      if (!el.textContent.trim()) return;
-      if (el.children.length > 3) return; // skip containers
+    // 25. Very small text — only flag meaningful text, skip icons/badges/legal-y elements
+    const smallTextFlagged = new Set();
+    document.querySelectorAll('p, li, td, a, label').forEach(el => {
+      const text = (el.textContent || '').trim();
+      if (text.length < 10) return; // skip tiny labels, icons, counts
+      if (el.children.length > 2) return;
       const style = window.getComputedStyle(el);
       const fontSize = parseFloat(style.fontSize);
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return; // hidden
       if (fontSize > 0 && fontSize < 10 && style.display !== 'none' && style.visibility !== 'hidden') {
+        // De-duplicate by rounded font-size — only report first occurrence per size
+        const key = fontSize.toFixed(0);
+        if (smallTextFlagged.has(key)) return;
+        smallTextFlagged.add(key);
         push(incomplete, 'custom-text-small', 'minor',
-          `Text is ${fontSize.toFixed(1)}px — very small text may be difficult to read`,
+          `Text is ${fontSize.toFixed(1)}px — very small text may be difficult to read (WCAG 1.4.8)`,
           ['wcag148', 'wcag2aaa'], el);
       }
     });
@@ -609,10 +629,23 @@ async function runCustomChecks(page) {
     // GROUP 9: TOUCH TARGETS & FOCUS
     // ================================================================
 
-    // 35. Touch target size
+    // 35. Touch target size — skip inline links within text (WCAG 2.5.8 exception)
     document.querySelectorAll('a, button, input, select, textarea, [role="button"], [role="link"], [tabindex]').forEach(el => {
       const rect = el.getBoundingClientRect();
       if (rect.width === 0 && rect.height === 0) return;
+      // Skip hidden / input type=hidden / zero-size
+      if (el.type === 'hidden') return;
+      // Skip inline links (WCAG 2.5.8 explicitly exempts inline links within sentences)
+      if (el.tagName === 'A') {
+        const parent = el.parentElement;
+        const parentTag = parent && parent.tagName;
+        if (parentTag === 'P' || parentTag === 'LI' || parentTag === 'SPAN' || parentTag === 'TD') {
+          // Inline link in text — skip
+          const parentText = (parent.textContent || '').trim();
+          const linkText = (el.textContent || '').trim();
+          if (parentText.length > linkText.length + 10) return; // part of larger text
+        }
+      }
       if (rect.width < 24 || rect.height < 24) {
         push(violations, 'custom-touch-target-minimum', 'moderate',
           `Touch target is ${Math.round(rect.width)}x${Math.round(rect.height)}px — minimum 24x24px (WCAG 2.5.8)`,
@@ -1153,23 +1186,73 @@ function mergeAllEngineResults(axeResults, pa11yResults, lighthouseResults, cust
   return merged;
 }
 
-// --- Scoring ---
+// --- Scoring (Section 508 / WCAG 2.1 AA compliance focus) ---
+// Penalty-based with category caps: one type of issue can't obliterate the score.
+// AAA and best-practice violations do NOT affect the compliance score.
+// Produces clear, defensible scores for compliance reporting.
 function calculateScore(merged) {
-  const totalRules = merged.violations.length + merged.passes.length + merged.incomplete.length;
-  if (totalRules === 0) return 100;
+  const penaltyByImpact = {
+    critical: 12,
+    serious: 6,
+    moderate: 3,
+    minor: 1
+  };
 
-  const impactWeights = { critical: 10, serious: 5, moderate: 3, minor: 1 };
-  let penalty = 0;
+  // Cap the damage any single category can do (prevents one bad rule from tanking score)
+  const CATEGORY_CAP = 15;
+
+  function isComplianceLevel(rule) {
+    const tags = rule.tags || [];
+    const hasA_or_AA = tags.some(t => /^wcag(2|21)(a|aa)$/.test(t) || /^wcag\d{3,}$/.test(t));
+    const isAAAOnly = tags.some(t => /^wcag(2|21)aaa$/.test(t)) && !hasA_or_AA;
+    const isBPOnly = tags.includes('best-practice') && !hasA_or_AA;
+    return hasA_or_AA && !isAAAOnly && !isBPOnly;
+  }
+
+  // Categorize rules — same category violations share a penalty cap
+  function getCategory(rule) {
+    const id = rule.id || '';
+    if (/contrast/i.test(id)) return 'contrast';
+    if (/alt|image/i.test(id)) return 'alt';
+    if (/label|form-field/i.test(id) || /H91|F68|H44/.test(id)) return 'label';
+    if (/link-name|link/i.test(id) || /H30/.test(id)) return 'link';
+    if (/button/i.test(id)) return 'button';
+    if (/heading/i.test(id)) return 'heading';
+    if (/landmark|region|bypass/i.test(id)) return 'landmark';
+    if (/lang|language/i.test(id)) return 'lang';
+    if (/duplicate-id/i.test(id)) return 'id';
+    if (/touch-target/i.test(id)) return 'touch-target';
+    return 'other';
+  }
+
+  const categoryPenalties = {};
+  let score = 100;
 
   merged.violations.forEach(rule => {
-    const weight = impactWeights[rule.impact] || 1;
+    if (!isComplianceLevel(rule)) return;
+    const category = getCategory(rule);
+    const penalty = penaltyByImpact[rule.impact] || 2;
     const nodeCount = rule.nodes ? rule.nodes.length : 1;
-    penalty += weight * Math.min(nodeCount, 10);
+    const nodeMultiplier = Math.min(1.3, 1 + (nodeCount - 1) * 0.03);
+    const ruleContribution = penalty * nodeMultiplier;
+
+    categoryPenalties[category] = (categoryPenalties[category] || 0) + ruleContribution;
   });
 
-  const maxPenalty = totalRules * 5;
-  const rawScore = Math.max(0, 100 - (penalty / Math.max(maxPenalty, 1)) * 100);
-  return Math.round(rawScore);
+  // Apply capped penalties per category
+  Object.values(categoryPenalties).forEach(p => {
+    score -= Math.min(p, CATEGORY_CAP);
+  });
+
+  // Needs-review: light touch (0.5 per rule, capped at 10 total)
+  let needsReviewPenalty = 0;
+  merged.incomplete.forEach(rule => {
+    if (!isComplianceLevel(rule)) return;
+    needsReviewPenalty += 0.5;
+  });
+  score -= Math.min(needsReviewPenalty, 10);
+
+  return Math.max(0, Math.min(100, Math.round(score)));
 }
 
 function scoreGrade(score) {
@@ -1180,7 +1263,7 @@ function scoreGrade(score) {
   return 'F';
 }
 
-// --- axe + pa11y Merge ---
+// --- axe + pa11y Merge (with semantic dedup) ---
 function mergeResults(axeResults, pa11yResults) {
   const merged = {
     violations: [...axeResults.violations],
@@ -1190,15 +1273,47 @@ function mergeResults(axeResults, pa11yResults) {
   };
 
   const axeSelectors = new Set();
+  // Track which categories axe already covered (e.g., contrast, alt, labels)
+  const axeCategories = new Set();
+  const categoryMap = {
+    'color-contrast': 'contrast', 'color-contrast-enhanced': 'contrast',
+    'image-alt': 'alt', 'image-redundant-alt': 'alt', 'role-img-alt': 'alt',
+    'label': 'label', 'select-name': 'label',
+    'link-name': 'link-name', 'button-name': 'button-name',
+    'document-title': 'page-title', 'html-has-lang': 'lang',
+    'heading-order': 'heading', 'page-has-heading-one': 'heading',
+    'landmark-one-main': 'landmark', 'region': 'landmark',
+    'duplicate-id': 'duplicate-id', 'duplicate-id-active': 'duplicate-id'
+  };
+
   axeResults.violations.forEach(rule => {
+    if (categoryMap[rule.id]) axeCategories.add(categoryMap[rule.id]);
     rule.nodes.forEach(node => {
       if (node.target) axeSelectors.add(node.target.join(' > '));
     });
   });
 
+  // Map pa11y codes to same categories
+  function pa11yCategory(code) {
+    if (!code) return null;
+    if (/1_4_3|1_4_6|G17|G18/.test(code)) return 'contrast';
+    if (/H37|H67|F65/.test(code)) return 'alt';
+    if (/H44|H65|F68/.test(code)) return 'label';
+    if (/H91\.A\.NoContent|H30/.test(code)) return 'link-name';
+    if (/H91\.InputButton|H91\.Button/.test(code)) return 'button-name';
+    if (/H25/.test(code)) return 'page-title';
+    if (/H57/.test(code)) return 'lang';
+    return null;
+  }
+
   const pa11yGrouped = {};
   (pa11yResults.issues || []).forEach(issue => {
     const key = issue.code || 'unknown';
+    const category = pa11yCategory(issue.code);
+
+    // Skip if axe already covers this category comprehensively
+    if (category && axeCategories.has(category)) return;
+
     if (!pa11yGrouped[key]) {
       pa11yGrouped[key] = {
         id: `pa11y-${key}`, impact: mapPa11yType(issue.type),
