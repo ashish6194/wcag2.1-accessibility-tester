@@ -160,6 +160,44 @@ app.get('/api/scan/stream', async (req, res) => {
   res.end();
 });
 
+// POST /api/report/html — generate HTML report from scan results
+app.post('/api/report/html', async (req, res) => {
+  const { url } = req.body;
+  if (!url) return res.status(400).json({ error: 'URL is required' });
+
+  try {
+    const b = await getBrowser();
+    const result = await scanPage(b, url, { log: () => {} });
+
+    const { generateReport } = require('./report');
+    const os = require('os');
+    const path = require('path');
+    const fs = require('fs');
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const tmpPath = path.join(os.tmpdir(), `wcag-report-${timestamp}.html`);
+
+    generateReport({
+      url: result.url,
+      timestamp: new Date().toISOString(),
+      axeResults: result.axeResults,
+      pa11yResults: result.pa11yResults,
+      merged: result.merged,
+      filepath: tmpPath,
+      score: result.score
+    });
+
+    const html = fs.readFileSync(tmpPath, 'utf-8');
+    fs.unlinkSync(tmpPath);
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="wcag-report-${timestamp}.html"`);
+    res.send(html);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 function simplifyRule(rule) {
   return {
     id: rule.id,

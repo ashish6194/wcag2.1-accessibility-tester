@@ -25,6 +25,7 @@ document.getElementById('closeHistoryBtn').addEventListener('click', () => histo
 document.getElementById('clearHistoryBtn').addEventListener('click', () => { localStorage.removeItem('wcag-history'); renderHistory(); });
 document.getElementById('exportJsonBtn').addEventListener('click', () => exportResults('json'));
 document.getElementById('exportCsvBtn').addEventListener('click', () => exportResults('csv'));
+document.getElementById('exportHtmlBtn').addEventListener('click', () => exportHtmlReport());
 
 document.querySelectorAll('.tab').forEach(tab => {
   tab.addEventListener('click', () => {
@@ -82,6 +83,7 @@ async function startScan() {
         saveHistory(currentResults);
         document.getElementById('exportJsonBtn').disabled = false;
         document.getElementById('exportCsvBtn').disabled = false;
+        document.getElementById('exportHtmlBtn').disabled = false;
       }
       setTimeout(() => progress.classList.add('hidden'), 1000);
     });
@@ -405,6 +407,42 @@ function renderHistory() {
 }
 
 // --- Export ---
+async function exportHtmlReport() {
+  if (!currentResults) return;
+
+  const btn = document.getElementById('exportHtmlBtn');
+  const originalText = btn.textContent;
+  btn.textContent = 'Generating...';
+  btn.disabled = true;
+
+  try {
+    showToast('Generating HTML report (takes ~30s)...');
+    const response = await fetch('/api/report/html', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: currentResults.url })
+    });
+
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.error || 'Failed to generate report');
+    }
+
+    const blob = await response.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `wcag-report-${ts()}.html`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    showToast('HTML report downloaded!');
+  } catch (err) {
+    showToast('Failed to export HTML: ' + err.message);
+  } finally {
+    btn.textContent = originalText;
+    btn.disabled = false;
+  }
+}
+
 function exportResults(format) {
   if (!currentResults) return;
   let content, filename, mimeType;
