@@ -1,10 +1,11 @@
-// Panel logic — scan triggers, results rendering, filtering, export
+// Panel logic — scan, results, scoring, element picker, history, export
 
 let scanResults = null;
 let activeTab = 'violations';
 
 // DOM refs
 const scanBtn = document.getElementById('scanBtn');
+const pickerBtn = document.getElementById('pickerBtn');
 const selectorInput = document.getElementById('selectorInput');
 const levelA = document.getElementById('levelA');
 const levelAA = document.getElementById('levelAA');
@@ -12,6 +13,10 @@ const levelAAA = document.getElementById('levelAAA');
 const bestPractices = document.getElementById('bestPractices');
 const statusEl = document.getElementById('status');
 const summaryEl = document.getElementById('summary');
+const scoreBar = document.getElementById('scoreBar');
+const scoreCircle = document.getElementById('scoreCircle');
+const scoreLabel = document.getElementById('scoreLabel');
+const scoreGrade = document.getElementById('scoreGrade');
 const tabsEl = document.getElementById('tabs');
 const resultsEl = document.getElementById('results');
 const detailPanel = document.getElementById('detailPanel');
@@ -20,12 +25,24 @@ const detailContent = document.getElementById('detailContent');
 const closeDetail = document.getElementById('closeDetail');
 const exportJson = document.getElementById('exportJson');
 const exportCsv = document.getElementById('exportCsv');
+const historyBtn = document.getElementById('historyBtn');
+const historyPanel = document.getElementById('historyPanel');
+const closeHistory = document.getElementById('closeHistory');
+const clearHistory = document.getElementById('clearHistory');
+const historyContent = document.getElementById('historyContent');
 
 // Event listeners
 scanBtn.addEventListener('click', startScan);
+pickerBtn.addEventListener('click', startPicker);
 closeDetail.addEventListener('click', hideDetail);
 exportJson.addEventListener('click', () => doExport('json'));
 exportCsv.addEventListener('click', () => doExport('csv'));
+historyBtn.addEventListener('click', showHistory);
+closeHistory.addEventListener('click', () => historyPanel.classList.add('hidden'));
+clearHistory.addEventListener('click', () => {
+  localStorage.removeItem('wcag-scan-history');
+  showHistory();
+});
 
 tabsEl.querySelectorAll('.tab').forEach(tab => {
   tab.addEventListener('click', () => {
@@ -36,7 +53,28 @@ tabsEl.querySelectorAll('.tab').forEach(tab => {
   });
 });
 
-// Scan
+// --- Element Picker ---
+function startPicker() {
+  const tabId = chrome.devtools.inspectedWindow.tabId;
+  pickerBtn.textContent = 'Picking...';
+  pickerBtn.disabled = true;
+
+  chrome.runtime.sendMessage({
+    action: 'startPicker',
+    tabId
+  }, (response) => {
+    if (response && response.selector) {
+      selectorInput.value = response.selector;
+      showStatus(`Selected: ${response.selector}`, 'success');
+    } else if (response && response.error) {
+      showStatus(`Picker failed: ${response.error}`, 'error');
+    }
+    pickerBtn.textContent = 'Pick Element';
+    pickerBtn.disabled = false;
+  });
+}
+
+// --- Scan ---
 async function startScan() {
   const levels = [];
   if (levelA.checked) levels.push('A');
@@ -52,13 +90,14 @@ async function startScan() {
   scanBtn.textContent = 'Scanning...';
   showStatus('Injecting axe-core and scanning page...', 'scanning');
   summaryEl.classList.add('hidden');
+  scoreBar.classList.add('hidden');
   tabsEl.classList.add('hidden');
   resultsEl.innerHTML = '';
 
   const tabId = chrome.devtools.inspectedWindow.tabId;
 
   try {
-    // Inject axe-core into the page's isolated world
+    // Inject axe-core
     await new Promise((resolve, reject) => {
       chrome.runtime.sendMessage({ action: 'injectAxe', tabId }, (response) => {
         if (response && response.error) reject(new Error(response.error));
@@ -69,7 +108,7 @@ async function startScan() {
     // Brief delay to ensure axe global is available to the content script
     await new Promise(r => setTimeout(r, 200));
 
-    // Then run the scan
+    // Run scan
     const response = await new Promise((resolve, reject) => {
       chrome.runtime.sendMessage({
         action: 'runScan',
@@ -80,20 +119,24 @@ async function startScan() {
           selector: selectorInput.value.trim() || null
         }
       }, (resp) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-        } else if (resp && resp.error) {
-          reject(new Error(resp.error));
-        } else {
-          resolve(resp);
-        }
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else if (resp && resp.error) reject(new Error(resp.error));
+        else resolve(resp);
       });
     });
 
     scanResults = response.results;
-    showStatus(`Scan complete. Found ${scanResults.violations.length} violation rules.`, 'success');
+
+    // Calculate and display score
+    const score = calculateScore(scanResults);
+    updateScore(score);
     updateSummary();
     renderResults();
+
+    // Save to history
+    saveToHistory(score, scanResults);
+
+    showStatus(`Scan complete. Score: ${score}/100. Found ${scanResults.violations.length} violation rules.`, 'success');
 
     exportJson.disabled = false;
     exportCsv.disabled = false;
@@ -106,6 +149,115 @@ async function startScan() {
   }
 }
 
+// --- Scoring ---
+function calculateScore(results) {
+  const totalRules = results.violations.length + results.passes.length + results.incomplete.length;
+  if (totalRules === 0) return 100;
+
+  const impactWeights = { critical: 10, serious: 5, moderate: 3, minor: 1 };
+  let penalty = 0;
+
+  results.violations.forEach(rule => {
+    const weight = impactWeights[rule.impact] || 1;
+    const nodeCount = rule.nodes ? rule.nodes.length : 1;
+    penalty += weight * Math.min(nodeCount, 10);
+  });
+
+  const maxPenalty = totalRules * 5;
+  const rawScore = Math.max(0, 100 - (penalty / Math.max(maxPenalty, 1)) * 100);
+  return Math.round(rawScore);
+}
+
+function updateScore(score) {
+  scoreCircle.textContent = score;
+  scoreCircle.style.background = score >= 90 ? '#16a34a' : score >= 70 ? '#d97706' : '#dc2626';
+  scoreLabel.textContent = `Accessibility Score: ${score}/100`;
+  const grade = score >= 90 ? 'A — Excellent' : score >= 80 ? 'B — Good' : score >= 70 ? 'C — Needs Improvement' : score >= 50 ? 'D — Poor' : 'F — Critical Issues';
+  scoreGrade.textContent = `Grade: ${grade}`;
+  scoreBar.classList.remove('hidden');
+}
+
+// --- History ---
+function getHistory() {
+  try {
+    return JSON.parse(localStorage.getItem('wcag-scan-history') || '[]');
+  } catch { return []; }
+}
+
+function saveToHistory(score, results) {
+  const history = getHistory();
+
+  // Get current page URL
+  chrome.devtools.inspectedWindow.eval('window.location.href', (url) => {
+    const entry = {
+      url: url || 'Unknown',
+      score,
+      violations: countNodes(results.violations),
+      rules: results.violations.length,
+      passed: results.passes.length,
+      timestamp: new Date().toISOString()
+    };
+
+    history.unshift(entry);
+
+    // Keep last 50 entries
+    if (history.length > 50) history.length = 50;
+    localStorage.setItem('wcag-scan-history', JSON.stringify(history));
+  });
+}
+
+function showHistory() {
+  const history = getHistory();
+  historyContent.innerHTML = '';
+
+  if (history.length === 0) {
+    historyContent.innerHTML = '<div style="text-align:center;padding:40px 20px;color:#9ca3af">No scan history yet.</div>';
+    historyPanel.classList.remove('hidden');
+    return;
+  }
+
+  // Group by URL to show diffs
+  const byUrl = {};
+  history.forEach(h => {
+    if (!byUrl[h.url]) byUrl[h.url] = [];
+    byUrl[h.url].push(h);
+  });
+
+  history.forEach((entry, i) => {
+    const item = document.createElement('div');
+    item.className = 'history-item';
+
+    const bg = entry.score >= 90 ? '#16a34a' : entry.score >= 70 ? '#d97706' : '#dc2626';
+    const date = new Date(entry.timestamp).toLocaleString();
+
+    // Compare with previous scan of same URL
+    const sameUrl = byUrl[entry.url] || [];
+    const prevIndex = sameUrl.indexOf(entry) + 1;
+    const prev = sameUrl[prevIndex];
+    let diffHtml = '';
+    if (prev) {
+      const diff = entry.score - prev.score;
+      if (diff > 0) diffHtml = `<span class="history-diff improved">+${diff}</span>`;
+      else if (diff < 0) diffHtml = `<span class="history-diff regressed">${diff}</span>`;
+      else diffHtml = `<span class="history-diff same">=</span>`;
+    }
+
+    item.innerHTML = `
+      <div class="history-score" style="background:${bg}">${entry.score}</div>
+      <div class="history-info">
+        <div class="history-url">${escapeHtml(entry.url)}</div>
+        <div class="history-meta">${date} | ${entry.violations} violations | ${entry.passed} passed</div>
+      </div>
+      ${diffHtml}
+    `;
+
+    historyContent.appendChild(item);
+  });
+
+  historyPanel.classList.remove('hidden');
+}
+
+// --- Status & Summary ---
 function showStatus(msg, type) {
   statusEl.textContent = msg;
   statusEl.className = `status ${type}`;
@@ -126,7 +278,7 @@ function countNodes(rules) {
   return rules.reduce((sum, rule) => sum + (rule.nodes ? rule.nodes.length : 0), 0);
 }
 
-// Render results for the active tab
+// --- Render Results ---
 function renderResults() {
   if (!scanResults) return;
 
@@ -138,21 +290,17 @@ function renderResults() {
     return;
   }
 
-  // Sort by impact severity
   const impactOrder = { critical: 0, serious: 1, moderate: 2, minor: 3 };
-  const sorted = [...data].sort((a, b) => {
-    return (impactOrder[a.impact] || 4) - (impactOrder[b.impact] || 4);
-  });
+  const sorted = [...data].sort((a, b) => (impactOrder[a.impact] || 4) - (impactOrder[b.impact] || 4));
 
   sorted.forEach(rule => {
     const group = document.createElement('div');
     group.className = 'rule-group';
 
-    // Header
     const header = document.createElement('div');
     header.className = 'rule-header';
-
     const impact = rule.impact || 'info';
+
     header.innerHTML = `
       <span class="impact-badge impact-${impact}">${impact}</span>
       <span class="rule-description">${escapeHtml(rule.description || rule.help || rule.id)}</span>
@@ -167,7 +315,6 @@ function renderResults() {
 
     group.appendChild(header);
 
-    // Nodes (affected elements)
     if (rule.nodes && rule.nodes.length > 0) {
       const nodesEl = document.createElement('div');
       nodesEl.className = 'rule-nodes';
@@ -175,7 +322,6 @@ function renderResults() {
       rule.nodes.forEach(node => {
         const item = document.createElement('div');
         item.className = 'node-item';
-
         const selector = node.target ? node.target.join(' > ') : '';
         const html = node.html || '';
         const message = node.failureSummary || node.message || '';
@@ -190,14 +336,12 @@ function renderResults() {
           </div>
         `;
 
-        // Highlight button
         item.querySelector('.highlight-btn').addEventListener('click', (e) => {
           e.stopPropagation();
           const tabId = chrome.devtools.inspectedWindow.tabId;
           chrome.runtime.sendMessage({ action: 'highlight', tabId, selector });
         });
 
-        // Detail button
         item.querySelector('.detail-btn').addEventListener('click', (e) => {
           e.stopPropagation();
           showDetail(rule, node);
@@ -215,34 +359,25 @@ function renderResults() {
 
 function renderTags(tags) {
   if (!tags) return '';
-  const wcagTags = tags.filter(t =>
-    t.startsWith('wcag') || t === 'best-practice'
-  );
-  // Show human-readable WCAG tags
-  return wcagTags.map(tag => {
-    const label = formatTag(tag);
-    return `<span class="wcag-tag">${label}</span>`;
-  }).join('');
+  return tags
+    .filter(t => t.startsWith('wcag') || t === 'best-practice')
+    .map(tag => `<span class="wcag-tag">${formatTag(tag)}</span>`)
+    .join('');
 }
 
 function formatTag(tag) {
   const map = {
-    'wcag2a': 'A',
-    'wcag2aa': 'AA',
-    'wcag2aaa': 'AAA',
-    'wcag21a': '2.1 A',
-    'wcag21aa': '2.1 AA',
-    'wcag21aaa': '2.1 AAA',
+    'wcag2a': 'A', 'wcag2aa': 'AA', 'wcag2aaa': 'AAA',
+    'wcag21a': '2.1 A', 'wcag21aa': '2.1 AA', 'wcag21aaa': '2.1 AAA',
     'best-practice': 'BP'
   };
   if (map[tag]) return map[tag];
-  // Handle tags like wcag111 → 1.1.1
   const match = tag.match(/^wcag(\d)(\d)(\d+)$/);
   if (match) return `${match[1]}.${match[2]}.${match[3]}`;
   return tag;
 }
 
-// Detail panel
+// --- Detail Panel ---
 function showDetail(rule, node) {
   detailTitle.textContent = rule.help || rule.description || rule.id;
   const selector = node.target ? node.target.join(' > ') : '';
@@ -284,8 +419,6 @@ function showDetail(rule, node) {
   `;
 
   detailPanel.classList.remove('hidden');
-
-  // Highlight the element on the page
   const tabId = chrome.devtools.inspectedWindow.tabId;
   chrome.runtime.sendMessage({ action: 'highlight', tabId, selector });
 }
@@ -296,7 +429,7 @@ function hideDetail() {
   chrome.runtime.sendMessage({ action: 'clearHighlight', tabId });
 }
 
-// Export
+// --- Export ---
 function doExport(format) {
   if (!scanResults) return;
 

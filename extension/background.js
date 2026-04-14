@@ -29,6 +29,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
   }
 
+  if (message.action === 'startPicker') {
+    chrome.tabs.sendMessage(message.tabId, {
+      action: 'startPicker'
+    }, (response) => {
+      if (chrome.runtime.lastError) {
+        sendResponse({ error: chrome.runtime.lastError.message });
+      } else {
+        sendResponse(response);
+      }
+    });
+    return true;
+  }
+
   if (message.action === 'injectAxe') {
     // Inject axe-core into the page if not already present
     chrome.scripting.executeScript({

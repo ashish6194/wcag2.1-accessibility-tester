@@ -1,14 +1,18 @@
 {
   "name": "wcag21-tester",
-  "version": "1.0.0",
-  "description": "WCAG 2.1 accessibility testing CLI tool with HTML report",
+  "version": "2.0.0",
+  "description": "WCAG 2.1 accessibility testing — CLI tool + web dashboard",
   "main": "test.js",
   "scripts": {
+    "start": "node server.js",
     "test": "node test.js"
   },
   "dependencies": {
     "@axe-core/puppeteer": "^4.11.0",
-    "puppeteer": "^23.0.0",
-    "pa11y": "^8.0.0"
+    "chrome-launcher": "^1.2.1",
+    "express": "^4.22.1",
+    "lighthouse": "^13.1.0",
+    "pa11y": "^8.0.0",
+    "puppeteer": "^23.0.0"
   }
 }

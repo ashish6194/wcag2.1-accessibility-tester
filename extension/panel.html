@@ -15,6 +15,7 @@
         <span class="version">v1.0 | axe-core</span>
       </div>
       <div class="header-right">
+        <button id="historyBtn" class="btn btn-sm" title="Scan History">History</button>
         <button id="exportJson" class="btn btn-sm" title="Export JSON" disabled>Export JSON</button>
         <button id="exportCsv" class="btn btn-sm" title="Export CSV" disabled>Export CSV</button>
       </div>
@@ -24,6 +25,7 @@
     <section class="controls">
       <div class="scan-row">
         <button id="scanBtn" class="btn btn-primary">Scan Full Page</button>
+        <button id="pickerBtn" class="btn btn-sm" title="Pick element to scan">Pick Element</button>
         <div class="partial-scan">
           <input type="text" id="selectorInput" placeholder="CSS selector for partial scan (optional)" />
         </div>
@@ -60,6 +62,15 @@
       </div>
     </section>
 
+    <!-- Score -->
+    <div id="scoreBar" class="score-bar hidden">
+      <div id="scoreCircle" class="score-circle">0</div>
+      <div class="score-text">
+        <span id="scoreLabel">Accessibility Score</span>
+        <span id="scoreGrade" class="score-grade"></span>
+      </div>
+    </div>
+
     <!-- Tabs -->
     <nav id="tabs" class="tabs hidden">
       <button class="tab active" data-tab="violations">Violations</button>
@@ -70,6 +81,16 @@
 
     <!-- Results -->
     <section id="results" class="results"></section>
+
+    <!-- History Panel -->
+    <div id="historyPanel" class="detail-panel hidden">
+      <div class="detail-header">
+        <button id="closeHistory" class="btn btn-sm">Back</button>
+        <h3>Scan History</h3>
+        <button id="clearHistory" class="btn btn-sm" style="margin-left:auto">Clear All</button>
+      </div>
+      <div id="historyContent" class="detail-content"></div>
+    </div>
 
     <!-- Detail Panel -->
     <div id="detailPanel" class="detail-panel hidden">
