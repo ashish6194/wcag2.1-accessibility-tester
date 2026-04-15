@@ -16,7 +16,18 @@ async function scanPage(browser, url, options = {}) {
 
   try {
     log(`${label}Loading page...`);
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
+
+    // Smart load strategy: try networkidle2 with short timeout, fallback to domcontentloaded.
+    // Dev servers (Vite, webpack, Next.js) never reach networkidle2 due to HMR websockets.
+    try {
+      await page.goto(url, { waitUntil: 'networkidle2', timeout: 15000 });
+    } catch (navErr) {
+      // Fallback: just wait for DOM + a short settling delay
+      log(`${label}  (networkidle2 timeout, falling back to domcontentloaded — common for dev servers)`);
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      // Give JS frameworks a moment to render
+      await new Promise(r => setTimeout(r, 2000));
+    }
 
     // Capture page title for reports
     const pageTitle = await page.title();
@@ -33,7 +44,8 @@ async function scanPage(browser, url, options = {}) {
     let pa11yResults;
     try {
       pa11yResults = await pa11y(url, {
-        standard: 'WCAG2AAA', runners: ['htmlcs'], timeout: 60000,
+        standard: 'WCAG2AAA', runners: ['htmlcs'], timeout: 45000,
+        wait: 1500,  // wait after load for JS frameworks
         chromeLaunchConfig: { args: ['--no-sandbox', '--disable-setuid-sandbox'] }
       });
       log(`${label}  pa11y: ${pa11yResults.issues.length} issues`);
