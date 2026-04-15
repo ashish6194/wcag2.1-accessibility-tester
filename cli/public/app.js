@@ -41,6 +41,21 @@ async function startScan() {
   const url = urlInput.value.trim();
   if (!url) { showToast('Please enter a URL'); return; }
 
+  const lvlA = document.getElementById('lvlA').checked;
+  const lvlAA = document.getElementById('lvlAA').checked;
+  const lvlAAA = document.getElementById('lvlAAA').checked;
+  const bp = document.getElementById('lvlBP').checked;
+  
+  const levels = [];
+  if (lvlA) levels.push('A');
+  if (lvlAA) levels.push('AA');
+  if (lvlAAA) levels.push('AAA');
+  
+  if (levels.length === 0 && !bp) {
+    showToast('Select at least one WCAG level or Best Practices');
+    return;
+  }
+
   scanBtn.disabled = true;
   scanBtnText.textContent = 'Scanning...';
   scanSpinner.classList.remove('hidden');
@@ -51,7 +66,7 @@ async function startScan() {
 
   try {
     // Use SSE for real-time progress
-    const es = new EventSource(`/api/scan/stream?url=${encodeURIComponent(url)}`);
+    const es = new EventSource(`/api/scan/stream?url=${encodeURIComponent(url)}&levels=${levels.join(',')}&bestPractices=${bp}`);
     let progressStep = 10;
 
     es.addEventListener('status', (e) => {
@@ -422,10 +437,24 @@ async function exportHtmlReport() {
 
   try {
     showToast('Generating HTML report (takes ~30s)...');
+    
+    const lvlA = document.getElementById('lvlA').checked;
+    const lvlAA = document.getElementById('lvlAA').checked;
+    const lvlAAA = document.getElementById('lvlAAA').checked;
+    const bp = document.getElementById('lvlBP').checked;
+    const levels = [];
+    if (lvlA) levels.push('A');
+    if (lvlAA) levels.push('AA');
+    if (lvlAAA) levels.push('AAA');
+
     const response = await fetch('/api/report/html', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: currentResults.url })
+      body: JSON.stringify({ 
+        url: currentResults.url,
+        levels,
+        bestPractices: bp
+      })
     });
 
     if (!response.ok) {
@@ -436,7 +465,9 @@ async function exportHtmlReport() {
     const blob = await response.blob();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `wcag-report-${ts()}.html`;
+    let slug = currentResults.pageTitle ? currentResults.pageTitle.toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0,50) : '';
+    const filename = slug ? `wcag-report-${slug}-${ts()}.html` : `wcag-report-${ts()}.html`;
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(a.href);
     showToast('HTML report downloaded!');
@@ -451,10 +482,13 @@ async function exportHtmlReport() {
 function exportResults(format) {
   if (!currentResults) return;
   let content, filename, mimeType;
+  
+  let slug = currentResults.pageTitle ? currentResults.pageTitle.toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0,50) : '';
+  let prefix = slug ? `wcag-report-${slug}` : 'wcag-report';
 
   if (format === 'json') {
     content = JSON.stringify(currentResults, null, 2);
-    filename = `wcag-report-${ts()}.json`;
+    filename = `${prefix}-${ts()}.json`;
     mimeType = 'application/json';
   } else {
     const rows = [['Type', 'Impact', 'Rule', 'Description', 'Tags', 'Selector', 'HTML', 'Fix', 'Help URL']];
@@ -466,7 +500,7 @@ function exportResults(format) {
       });
     });
     content = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
-    filename = `wcag-report-${ts()}.csv`;
+    filename = `${prefix}-${ts()}.csv`;
     mimeType = 'text/csv';
   }
 

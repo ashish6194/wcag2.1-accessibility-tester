@@ -93,8 +93,15 @@ async function scanPage(browser, url, options = {}) {
 
     // 1. axe-core
     log(`${label}Running axe-core...`);
+    const axeTags = [];
+    const levels = options.levels || ['A', 'AA', 'AAA'];
+    if (levels.includes('A')) axeTags.push('wcag2a', 'wcag21a');
+    if (levels.includes('AA')) axeTags.push('wcag2aa', 'wcag21aa');
+    if (levels.includes('AAA')) axeTags.push('wcag2aaa', 'wcag21aaa');
+    if (options.bestPractices !== false) axeTags.push('best-practice');
+
     const axeResults = await new AxePuppeteer(page)
-      .withTags(['wcag2a', 'wcag2aa', 'wcag2aaa', 'wcag21a', 'wcag21aa', 'wcag21aaa', 'best-practice'])
+      .withTags(axeTags.length > 0 ? axeTags : ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
       .analyze();
     log(`${label}  axe-core: ${axeResults.violations.length} rules, ${countNodes(axeResults.violations)} elements`);
 
@@ -102,8 +109,9 @@ async function scanPage(browser, url, options = {}) {
     log(`${label}Running pa11y...`);
     let pa11yResults;
     try {
+      const pa11yStandard = levels.includes('AAA') ? 'WCAG2AAA' : (levels.includes('AA') ? 'WCAG2AA' : 'WCAG2A');
       pa11yResults = await pa11y(url, {
-        standard: 'WCAG2AAA', runners: ['htmlcs'], timeout: 45000,
+        standard: pa11yStandard, runners: ['htmlcs'], timeout: 45000,
         wait: 1500,  // wait after load for JS frameworks
         chromeLaunchConfig: { args: ['--no-sandbox', '--disable-setuid-sandbox'] }
       });
@@ -128,6 +136,17 @@ async function scanPage(browser, url, options = {}) {
     let customResults = { violations: [], incomplete: [] };
     try {
       customResults = await runCustomChecks(page);
+      
+      // Filter based on levels
+      const activeTags = new Set(axeTags);
+      const filterCustom = (rule) => {
+        if (!rule.tags || rule.tags.length === 0) return true;
+        return rule.tags.some(tag => activeTags.has(tag));
+      };
+      
+      customResults.violations = customResults.violations.filter(filterCustom);
+      customResults.incomplete = customResults.incomplete.filter(filterCustom);
+      
       log(`${label}  Custom: ${customResults.violations.length} violations, ${customResults.incomplete.length} needs review`);
     } catch (err) {
       log(`${label}  Custom checks failed: ${err.message}`);
@@ -135,6 +154,23 @@ async function scanPage(browser, url, options = {}) {
 
     // Merge all results
     const merged = mergeAllEngineResults(axeResults, pa11yResults, lighthouseResults, customResults);
+
+    const allowedTags = new Set(axeTags);
+    const stripUnrequestedTags = (rule) => {
+      if (rule.tags && rule.tags.length > 0) {
+        rule.tags = rule.tags.filter(t => {
+          if (t === 'best-practice' && !allowedTags.has('best-practice')) return false;
+          if ((t === 'wcag2aaa' || t === 'wcag21aaa') && !allowedTags.has('wcag2aaa')) return false;
+          if ((t === 'wcag2aa' || t === 'wcag21aa') && !allowedTags.has('wcag2aa')) return false;
+          if ((t === 'wcag2a' || t === 'wcag21a') && !allowedTags.has('wcag2a')) return false;
+          return true;
+        });
+      }
+    };
+    merged.violations.forEach(stripUnrequestedTags);
+    merged.incomplete.forEach(stripUnrequestedTags);
+    merged.passes.forEach(stripUnrequestedTags);
+
     const score = calculateScore(merged);
 
     return {

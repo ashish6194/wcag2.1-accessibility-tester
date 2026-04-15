@@ -93,7 +93,7 @@ async function run() {
       console.log(`${label}Scanning: ${url}`);
 
       try {
-        const result = await scanPage(browser, url, label);
+        const result = await scanPage(browser, url, { label });
         allResults.push(result);
       } catch (err) {
         console.error(`\n${label}\x1b[31m✗ Scan Failed\x1b[0m`);

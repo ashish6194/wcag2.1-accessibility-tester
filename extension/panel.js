@@ -433,25 +433,30 @@ function hideDetail() {
 function doExport(format) {
   if (!scanResults) return;
 
-  let content, filename, mimeType;
+  chrome.devtools.inspectedWindow.eval('document.title', (title) => {
+    let slug = typeof title === 'string' && title ? title.toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0,50) : '';
+    let prefix = slug ? `wcag-report-${slug}` : 'wcag-report';
+    
+    let content, filename, mimeType;
 
-  if (format === 'json') {
-    content = JSON.stringify(scanResults, null, 2);
-    filename = `wcag-report-${timestamp()}.json`;
-    mimeType = 'application/json';
-  } else {
-    content = generateCsv(scanResults);
-    filename = `wcag-report-${timestamp()}.csv`;
-    mimeType = 'text/csv';
-  }
+    if (format === 'json') {
+      content = JSON.stringify(scanResults, null, 2);
+      filename = `${prefix}-${timestamp()}.json`;
+      mimeType = 'application/json';
+    } else {
+      content = generateCsv(scanResults);
+      filename = `${prefix}-${timestamp()}.csv`;
+      mimeType = 'text/csv';
+    }
 
-  const blob = new Blob([content], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  });
 }
 
 function generateCsv(results) {

@@ -34,7 +34,7 @@ app.get('/api/criteria', (req, res) => {
 
 // POST /api/scan — run accessibility scan
 app.post('/api/scan', async (req, res) => {
-  const { url } = req.body;
+  const { url, levels, bestPractices } = req.body;
 
   if (!url) {
     return res.status(400).json({ error: 'URL is required' });
@@ -43,7 +43,9 @@ app.post('/api/scan', async (req, res) => {
   try {
     const b = await getBrowser();
     const result = await scanPage(b, url, {
-      log: () => {}
+      log: () => {},
+      levels: levels || ['A', 'AA', 'AAA'],
+      bestPractices: bestPractices !== false
     });
 
     // Build summary
@@ -66,6 +68,7 @@ app.post('/api/scan', async (req, res) => {
 
     res.json({
       url: result.url,
+      pageTitle: result.pageTitle,
       score: result.score,
       grade: scoreGrade(result.score),
       engines: result.engines,
@@ -91,6 +94,8 @@ app.post('/api/scan', async (req, res) => {
 // GET /api/scan/stream — SSE for real-time scan progress
 app.get('/api/scan/stream', async (req, res) => {
   const url = req.query.url;
+  const levels = req.query.levels ? req.query.levels.split(',') : ['A', 'AA', 'AAA'];
+  const bestPractices = req.query.bestPractices !== 'false';
   if (!url) {
     return res.status(400).json({ error: 'URL query param required' });
   }
@@ -112,7 +117,9 @@ app.get('/api/scan/stream', async (req, res) => {
     send('status', { message: 'Loading page...' });
 
     const result = await scanPage(b, url, {
-      log: (msg) => send('status', { message: msg })
+      log: (msg) => send('status', { message: msg }),
+      levels,
+      bestPractices
     });
 
     // Build summary (same as POST handler)
@@ -134,6 +141,7 @@ app.get('/api/scan/stream', async (req, res) => {
 
     send('result', {
       url: result.url,
+      pageTitle: result.pageTitle,
       score: result.score,
       grade: scoreGrade(result.score),
       engines: result.engines,
@@ -162,12 +170,16 @@ app.get('/api/scan/stream', async (req, res) => {
 
 // POST /api/report/html — generate HTML report from scan results
 app.post('/api/report/html', async (req, res) => {
-  const { url } = req.body;
+  const { url, levels, bestPractices } = req.body;
   if (!url) return res.status(400).json({ error: 'URL is required' });
 
   try {
     const b = await getBrowser();
-    const result = await scanPage(b, url, { log: () => {} });
+    const result = await scanPage(b, url, { 
+      log: () => {},
+      levels: levels || ['A', 'AA', 'AAA'],
+      bestPractices: bestPractices !== false
+    });
 
     const { generateReport } = require('./report');
     const os = require('os');
@@ -190,8 +202,13 @@ app.post('/api/report/html', async (req, res) => {
     const html = fs.readFileSync(tmpPath, 'utf-8');
     fs.unlinkSync(tmpPath);
 
+    let slug = '';
+    if (result.pageTitle) {
+      slug = '-' + result.pageTitle.toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 50);
+    }
+    
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="wcag-report-${timestamp}.html"`);
+    res.setHeader('Content-Disposition', `attachment; filename="wcag-report${slug}-${timestamp}.html"`);
     res.send(html);
   } catch (err) {
     res.status(500).json({ error: err.message });
