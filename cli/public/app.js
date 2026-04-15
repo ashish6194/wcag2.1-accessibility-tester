@@ -70,10 +70,15 @@ async function startScan() {
     es.addEventListener('error', (e) => {
       try {
         const data = JSON.parse(e.data);
-        showToast('Scan failed: ' + data.message);
+        showErrorBanner(data.message);
       } catch (_) {
-        showToast('Scan connection lost. Retrying...');
+        showErrorBanner('Scan connection lost. Check server and try again.');
       }
+      es.close();
+      progress.classList.add('hidden');
+      scanBtn.disabled = false;
+      scanBtnText.textContent = 'Scan';
+      scanSpinner.classList.add('hidden');
     });
 
     es.addEventListener('done', () => {
@@ -490,6 +495,37 @@ function esc(s) {
 }
 
 function ts() { return new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19); }
+
+function showErrorBanner(message) {
+  // Remove existing banner
+  const existing = document.getElementById('errorBanner');
+  if (existing) existing.remove();
+
+  const banner = document.createElement('div');
+  banner.id = 'errorBanner';
+  banner.style.cssText = `
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-left: 4px solid #dc2626;
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 20px 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+  `;
+  banner.innerHTML = `
+    <div style="font-size:22px;flex-shrink:0">⚠️</div>
+    <div style="flex:1">
+      <div style="font-size:14px;font-weight:700;color:#991b1b;margin-bottom:4px">Scan Failed</div>
+      <div style="font-size:13px;color:#7f1d1d;line-height:1.5">${esc(message)}</div>
+    </div>
+    <button onclick="document.getElementById('errorBanner').remove()" style="background:none;border:none;cursor:pointer;font-size:20px;color:#991b1b;padding:0 4px">&times;</button>
+  `;
+
+  const resultsContainer = document.getElementById('resultsContainer');
+  resultsContainer.parentElement.insertBefore(banner, resultsContainer);
+}
 
 function showToast(msg) {
   toast.textContent = msg;

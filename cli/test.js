@@ -96,7 +96,9 @@ async function run() {
         const result = await scanPage(browser, url, label);
         allResults.push(result);
       } catch (err) {
-        console.error(`${label}  Failed: ${err.message}`);
+        console.error(`\n${label}\x1b[31m✗ Scan Failed\x1b[0m`);
+        console.error(`${label}  URL:   ${url}`);
+        console.error(`${label}  Error: ${err.message}\n`);
         allResults.push({
           url,
           error: err.message,
@@ -114,6 +116,12 @@ async function run() {
         r.score = calculateScore(r.merged);
       }
     });
+
+    // If single URL and it failed, exit with clear error — don't generate empty report
+    if (!isBatch && allResults.length === 1 && allResults[0].error) {
+      console.error('\nNo scan data to report. Fix the URL and try again.\n');
+      process.exit(1);
+    }
 
     // Output
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);

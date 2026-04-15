@@ -17,16 +17,75 @@ async function scanPage(browser, url, options = {}) {
   try {
     log(`${label}Loading page...`);
 
-    // Smart load strategy: try networkidle2 with short timeout, fallback to domcontentloaded.
-    // Dev servers (Vite, webpack, Next.js) never reach networkidle2 due to HMR websockets.
+    // Smart load strategy with clear error handling
+    let response;
     try {
-      await page.goto(url, { waitUntil: 'networkidle2', timeout: 15000 });
+      response = await page.goto(url, { waitUntil: 'networkidle2', timeout: 15000 });
     } catch (navErr) {
-      // Fallback: just wait for DOM + a short settling delay
-      log(`${label}  (networkidle2 timeout, falling back to domcontentloaded — common for dev servers)`);
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      // Give JS frameworks a moment to render
-      await new Promise(r => setTimeout(r, 2000));
+      // Classify the error for a better message
+      const msg = navErr.message || '';
+
+      if (/ERR_NAME_NOT_RESOLVED|getaddrinfo.*ENOTFOUND/i.test(msg)) {
+        throw new Error(`URL not found — the domain does not exist or cannot be resolved. Check the URL spelling.`);
+      }
+      if (/ERR_CONNECTION_REFUSED|ECONNREFUSED/i.test(msg)) {
+        throw new Error(`Connection refused — no server is running at this URL. If this is localhost, make sure your dev server is running on the correct port.`);
+      }
+      if (/ERR_CONNECTION_TIMED_OUT|ETIMEDOUT/i.test(msg)) {
+        throw new Error(`Connection timed out — the server did not respond. Check your network connection, VPN, or firewall.`);
+      }
+      if (/ERR_CERT|ERR_SSL|self.signed|CERT_HAS_EXPIRED/i.test(msg)) {
+        throw new Error(`SSL/Certificate error — the site has an invalid or self-signed certificate. For localhost HTTPS, use http:// instead, or add --ignore-certificate-errors.`);
+      }
+      if (/ERR_INVALID_URL|Invalid URL/i.test(msg)) {
+        throw new Error(`Invalid URL format — "${url}". URLs must include the protocol (http:// or https://).`);
+      }
+
+      // Timeout — try the fallback load strategy
+      if (/Navigation timeout|Timeout/i.test(msg)) {
+        log(`${label}  (networkidle2 timeout, falling back to domcontentloaded — common for dev servers)`);
+        try {
+          response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+          await new Promise(r => setTimeout(r, 2000));
+        } catch (fallbackErr) {
+          throw new Error(`Page failed to load after 45 seconds. Possible causes: (1) server is too slow, (2) page has infinite redirects, (3) server is down. Original error: ${fallbackErr.message}`);
+        }
+      } else {
+        throw new Error(`Failed to load page: ${msg}`);
+      }
+    }
+
+    // Check HTTP response status
+    if (response) {
+      const status = response.status();
+      if (status >= 400) {
+        const statusMessages = {
+          401: 'Authentication required — this page requires login. Use the Chrome extension after logging in.',
+          403: 'Forbidden — the server refused access. The page may be behind authentication or IP-restricted.',
+          404: 'Page not found — the URL does not exist on the server.',
+          500: 'Server error (500) — the website is experiencing issues.',
+          502: 'Bad gateway (502) — the server is temporarily down.',
+          503: 'Service unavailable (503) — the server is overloaded or under maintenance.',
+          504: 'Gateway timeout (504) — the server did not respond in time.'
+        };
+        throw new Error(statusMessages[status] || `HTTP ${status} error — the server returned an error response.`);
+      }
+    }
+
+    // Verify we have actual page content (not a blank page)
+    const bodyContent = await page.evaluate(() => {
+      return {
+        hasBody: !!document.body,
+        bodyText: document.body ? (document.body.innerText || '').trim().length : 0,
+        hasElements: document.body ? document.body.children.length : 0
+      };
+    });
+
+    if (!bodyContent.hasBody) {
+      throw new Error('Page loaded but has no body element — this is not a valid HTML page.');
+    }
+    if (bodyContent.hasElements === 0 && bodyContent.bodyText === 0) {
+      throw new Error('Page loaded but is completely empty — no HTML content to scan. The page may be blocking automation or requires JavaScript that did not run.');
     }
 
     // Capture page title for reports
